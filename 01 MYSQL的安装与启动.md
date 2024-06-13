@@ -1,243 +1,276 @@
-1.Mysql安装
+# mysql基本原理
 
-①下载并上传解压文件,安装在/application/mysql
+## 1 连接层
 
-```
-tar xf mysql-5.7.14-linux-glibc2.5-86_64.tar.gz
+### 1.1 mysql允许的连接类型
 
-mkdir /application
+#### 1.1.1 SOCKET套接字
 
-mv mysql-5.7.14-linux-glibc2.5-x86_64 /application/mysql
-
-```
-
-②处理原始环境
+##### 1.1.1.1 套接字概述
 
 ```
-yum remove -y mariadb-libs
+套接字（Socket）是一种网络通信的基础机制，它允许程序通过网络进行数据交换。套接字可以在不同的计算机之间进行通信，也可以在同一台计算机上的不同进程之间进行通信。
 
-yum install -y libaio-devel
+在UNIX和Linux系统中，MySQL通常使用UNIX域套接字（UNIX domain socket）来实现客户端和服务器之间的通信。UNIX域套接字是操作系统提供的一种进程间通信（IPC）机制，它使用文件系统中的一个文件作为通信端点。
+
+通过UNIX域套接字连接MySQL是一种高效、安全且简单的通信方式，特别适用于本地连接。理解其原理和配置方法有助于优化MySQL的使用和性能。
 ```
 
-③设置环境变量
+##### 1.1.1.2 连接流程
 
-```
-vim /etc/profile
+```tex
+#服务器端创建套接字：
+MySQL服务器启动时，会创建一个UNIX域套接字。这个套接字文件通常位于/var/run/mysqld/mysqld.sock（具体路径可以在MySQL配置文件中配置）。
+MySQL服务器会在这个套接字上监听来自客户端的连接请求。
 
-export PATH=/application/mysql/bin:$PATH 
+#客户端连接套接字：
+当一个MySQL客户端（例如mysql命令行工具或其他应用程序）需要连接到MySQL服务器时，它会创建一个UNIX域套接字，并尝试连接到服务器的套接字文件。
+客户端需要知道服务器套接字文件的路径，通常可以通过配置文件或命令行参数指定。
 
-source /etc/profile
+#三次握手：
+与TCP连接类似，套接字连接也需要进行三次握手来建立连接。这确保了客户端和服务器都准备好进行数据传输。
 
-mysql -V
-```
+#认证和授权：
+连接建立后，MySQL服务器会进行用户认证和授权。客户端需要提供用户名和密码，服务器会验证这些凭证，并检查用户是否有权限访问请求的数据库。
 
-④创建数据路径
+#数据传输：
+一旦连接和认证完成，客户端和服务器之间可以开始数据传输。客户端可以发送SQL查询，服务器会执行这些查询并将结果通过套接字返回给客户端。
 
-```
-mkdir -p /data/mysql/3306
-```
-
-⑤创建用户并授权
-
-```
-useradd -s /sbin/nologin mysql
-
-chown -R mysql.mysql /application/*
-
-chown -R mysql.mysql /data
+#连接关闭：
+当客户端完成所有操作后，会关闭套接字连接。服务器也会相应地释放资源。
 ```
 
-⑥初始化命令
+##### 1.1.1.3 优点
 
 ```
-mysqld --initialize-insecure --user=mysql --basedir=/application/mysql --datadir=/data/mysql/3306
-
-mysqld --initialize-insecure --user=mysql --basedir=/usr/local/mysql --datadir=/data/mysql/3306
+高效：由于UNIX域套接字是本地通信机制，数据不需要经过网络栈，因此通信效率高。
+安全：套接字文件通常位于受保护的文件系统位置，只有具有适当权限的用户和进程才能访问。
+简单：无需配置网络相关的参数（如IP地址和端口），只需指定套接字文件路径即可。
 ```
 
-2.初始化配置文件
-
-①.作用：
-
-​	（1）影响数据库的启动
-
-​	（2）影响到客户端的功能
-
-②.初始化配置的方法
-
-（1）初始化配置文件,例如/etc/my.cnf
-
-（2）启动命令行上进行设置，例如:mysqld_safe和mysqld
-
-（3）预编译时的设置，仅限于编译安装时的设置
-
-③.初始化文件的书写格式
+##### 1.1.1.4 缺点
 
 ```
-[标签]
-xxx=xxx
-[标签]
-xxx=xxx
+1. 局限于本地通信
+2. 受限于文件系统权限
+3. 文件系统依赖 需要确保服务器和所有客户端配置了正确的套接字文件路径
+4. 性能瓶颈 高并发高负载下会成为性能瓶颈
+5. 维护复杂性
+6. 缺乏网络特性
+7. 受限的可扩展性
+8. 工具和监控支持有限
 ```
 
-④.配置文件标签归类
+##### 1.1.1.5 配置
 
-服务器端:
-
+```shell
 [mysqld]
+socket=/var/run/mysqld/mysqld.sock
 
-[mysqld_safe]
+[client]
+socket=/var/run/mysqld/mysqld.sock
+```
 
-[server]
+##### 1.1.1.6 使用
 
-客户端: 
+```shell
+mysql -u username -p --socket=/var/run/mysqld/mysqld.sock
+```
 
-[mysql]
-
-[mysqladmin]
-
-[mysqldump]
-
-[client] 
-
-⑤.配置文件设置样板  /etc/my.cnf
+##### 1.1.1.7 故障排除
 
 ```
-#服务器端配置
+套接字文件不存在：确保MySQL服务器已启动，并且套接字文件路径正确。
+权限问题：确保客户端进程有权限访问套接字文件。通常，这需要客户端运行在与服务器相同的用户或用户组下。
+配置错误：检查MySQL配置文件中的套接字路径是否一致。
+```
+
+#### 1.1.2 TCP/IP
+
+##### 1.1.2.1 TCP/IP 概述
+
+```
+TCP/IP（Transmission Control Protocol/Internet Protocol）是一套用于网络通信的协议。TCP/IP连接通过网络传输数据，支持广域网（WAN）和局域网（LAN）中的通信。
+
+MySQL通过TCP/IP进行连接是一种灵活且广泛应用的方式，特别适用于分布式系统和远程访问。理解其工作原理和配置方法，有助于优化MySQL的使用和性能，确保数据传输的安全性和可靠性。
+```
+
+##### 1.1.2.2 连接流程
+
+```shell
+1. 服务器端初始化
+MySQL服务器启动时，会绑定到一个IP地址和端口号，默认情况下是绑定到所有可用的网络接口（0.0.0.0），并监听端口3306。	
+可以在MySQL配置文件my.cnf中通过bind-address和port选项进行配置。
 [mysqld]
-#用户
-user=mysql
-#软件安装目录
-basedir=/application/mysql
-#数据路径
-datadir=/data/mysql/3306
-#socket文件位置
-socket=/tmp/mysql.sock
-#服务器id号
-server_id=6
-#端口号
-port=3306
-#客户端配置
-[mysql]
-#socket文件位置
-socket=/tmp/mysql.sock
+bind-address = 0.0.0.0
+port = 3306
+
+2. 客户端连接请求
+建立TCP连接：客户端使用指定的IP地址和端口号向服务器发起连接请求。通常在命令行或配置文件中指定这些参数。
+mysql -h <server_ip> -P 3306 -u username -p
+三次握手：
+TCP连接的建立过程遵循三次握手机制。客户端向服务器发送SYN包，服务器响应SYN-ACK包，客户端再发送ACK包以确认连接建立。
+
+3. 认证和授权
+用户认证：连接建立后，客户端需要提供用户名和密码。服务器会验证这些凭证。
+权限认证：MySQL通过用户表（如mysql.user表）检查用户名和密码的正确性。
+权限检查：服务器还会检查客户端用户对所请求的数据库和表的权限。
+
+4.数据传输
+发送SQL查询： 客户端发送SQL查询到服务器（数据通过TCP连接传输）。
+执行查询并返回结果： 服务器执行查询，并将结果集通过TCP连接返回给客户端。
+保持连接：连接在整个会话期间保持打开状态，直到客户端主动关闭连接或发生超时等情况。
+
+5. 连接关闭
+当客户端完成所有操作后，会发送FIN包关闭连接。
+服务器响应FIN-ACK包并关闭连接。
+双方释放资源。
 ```
 
-⑥配置文件读取顺序
-
-/etc/my.cnf 
-
-/etc/mysql/my.cnf 
-
-/usr/local/mysql/etc/my.cnf 
-
-~/.my.cnf 
-
-配置文件以最后一个为准
-
-⑦强制使用自定义配置文件
-
-​	--defautls-file
+##### 1.1.2.3 TCP/IP优点
 
 ```
-//强制读取my.test.cnf文件，其他的配置文件都不读取
-[root@shell 20:42 ~]#mysqld_safe --defaults-file=/my.test.cnf
+跨网络通信：支持跨越不同计算机和网络的通信，是分布式系统和远程访问的首选。
+灵活性：可以在不同的网络环境中使用，包括局域网、广域网和互联网。
+标准化：基于标准的网络协议，兼容性好，支持各种操作系统和网络设备。
 ```
 
-
-
-3.启动数据库
-
-①mysql的启动过程
-
-​	Ⅰ.日常启停
-
-​	mysql.server start	 ---> 	mysqld_safe 	--->	mysqld
-
-​	mysql.service	--->	mysqld
-
-​	Ⅱ.维护性任务
-
-​	mysqld_safe [临时参数] &
-
-​	命令行内临时参数优先级最高
-
-
-
-②各种启动方式配置
-
-Ⅰ. sys-v
-
-service mysqld  start启动方式配置
-
-**多实例未验证可用性**
+##### 1.1.2.4 TCP/IP缺点
 
 ```
-cp /application/mysql/support-files/mysql.server  /etc/init.d/mysqld 
-
-service mysqld restart
+性能开销：相比于UNIX域套接字，本地通信中TCP/IP的性能略低，因为需要经过网络栈处理。
+安全性：需要额外的安全措施（如SSL/TLS）来保护数据传输，防止网络监听和中间人攻击。
+配置复杂性：需要正确配置网络、防火墙和路由规则，可能会增加系统配置和维护的复杂性。
 ```
 
-Ⅱ.systemd
+##### 1.1.2.5 配置TCP/IP
 
-systemctl start mysqld启动方式配置
+```shell
+[mysqld]
+bind-address = 0.0.0.0  # 监听所有网络接口
+port = 3306             # 监听端口
 
-```
-cat >/etc/systemd/system/mysqld.service <<EOF
-[Unit]
-Description=MySQL Server
-Documentation=man:mysqld(8)
-Documentation=http://dev.mysql.com/doc/refman/en/using-systemd.html
-After=network.target
-After=syslog.target
-[Install]
-WantedBy=multi-user.target
-[Service]
-User=mysql
-Group=mysql
-ExecStart=/application/mysql/bin/mysqld --defaults-file=/etc/my.cnf
-LimitNOFILE = 5000
-EOF
+[client]
+host = <server_ip>      # 服务器IP地址
+port = 3306             # 服务器端口
 ```
 
-```
-//在多实例中需要更改 ExecStart指向的my.cnf位置
-```
+##### 1.1.2.6 使用TCP/IP
 
-
-
-4.MYSQL的连接管理
-
-​	注意：提前应该将用户授权做好
-
-TCP/ IP:
-
-```
-mysql> grant all on *.* to root@'192.168.137.%' identified by '123456';
-Query OK, 0 rows affected, 1 warning (0.00 sec)
-
-[root@shell 20:53 ~]#mysql -uroot -p -h 192.168.137.100 -P3306
+```shell
+mysql -h <server_ip> -P 3306 -u username -p
 ```
 
-Socket:
+##### 1.1.2.7 TCP/IP故障排除
+
+###### 1.1.2.7.1 无法连接到服务器
+
+报错信息
+
+```shell
+ERROR 2003 (HY000): Can't connect to MySQL server on '<server_ip>' (111)
+```
+
+排查方法
 
 ```
-[root@shell 20:56 ~]#mysql -uroot -p -S /tmp/mysql.sock
+1 检查服务器是否运行：确保MySQL服务器正在运行。
+2 检查IP地址和端口：确保客户端使用的IP地址和端口正确，并且服务器监听在这个地址和端口上。
+3 防火墙配置：确保服务器的防火墙允许客户端的IP地址访问MySQL端口（通常是3306）。
+4 网络连接：确认客户端和服务器之间的网络连接正常，可以使用ping或telnet等工具进行测试。
 ```
 
--e 免交互执行sql语句
+###### 1.1.2.7.2 访问被拒绝
+
+报错信息
 
 ```
-[root@shell 18:22 ~]#mysql -uroot -p -e "show databases;"
-Enter password: 
-+--------------------+
-| Database           |
-+--------------------+
-| information_schema |
-| mysql              |
-| performance_schema |
-| sys                |
-| wordpress          |
-+--------------------+
+ERROR 1045 (28000): Access denied for user 'username'@'host' (using password: YES)
+```
+
+排查方法
+
+```
+1 用户名和密码：确保提供的用户名和密码正确。
+2 用户权限：检查MySQL用户表（如mysql.user）中的权限设置，确保用户有权访问请求的数据库和表。
+3 主机限制：确保用户可以从客户端主机连接到服务器。MySQL中用户权限是基于用户名和主机的组合的，如'username'@'host'。
+```
+
+###### 1.1.2.7.3 网络超时
+
+报错信息
+
+```
+ERROR 2013 (HY000): Lost connection to MySQL server during query
+```
+
+排查方法
+
+```
+1 网络稳定性：检查网络连接是否稳定，是否存在网络延迟或丢包。
+2 服务器负载：确保MySQL服务器没有过载，可以通过监控服务器资源使用情况（CPU、内存、I/O）来判断。
+3 配置调整：检查并调整MySQL和网络的超时配置，如wait_timeout、connect_timeout和net_read_timeout等参数。
+```
+
+###### 1.1.2.7.4 连接被拒绝
+
+报错信息
+
+```
+ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/var/lib/mysql/mysql.sock' (111)
+```
+
+排查方法
+
+```
+1 服务器是否启动：确保MySQL服务器已启动并在监听正确的网络接口和端口。
+2 配置文件检查：检查MySQL配置文件（如`my.cnf`）中的`bind-address`和`port`配置，确保其正确。
+3 端口占用：检查MySQL服务器端口是否被其他进程占用，可以使用`netstat -tuln`命令查看端口使用情况。
+```
+
+###### 1.1.2.7.5 主机名解析错误
+
+报错信息
+
+```
+ERROR 2005 (HY000): Unknown MySQL server host '<hostname>' (11001)
+```
+
+排查方法
+
+```
+1 DNS解析：检查客户端和服务器的DNS解析是否正常，可以使用nslookup或dig工具测试。
+2 主机名配置：确保在MySQL的用户表中，用户主机名配置正确。如果使用IP地址连接，确保IP地址配置正确
+```
+
+###### 1.1.2.7.6 连接数过多
+
+报错信息
+
+```
+ERROR 1040 (HY000): Too many connections
+```
+
+排查方法
+
+```
+1 最大连接数：检查并调整MySQL服务器的最大连接数配置参数max_connections。
+2 连接管理：确保应用程序正确管理数据库连接，避免连接泄漏或不必要的长时间保持连接。
+3 连接池：考虑使用连接池来管理数据库连接，减少连接建立和关闭的开销。
+```
+
+###### 1.1.2.7.7 SSL/TLS 错误
+
+报错信息
+
+```
+ERROR 2026 (HY000): SSL connection error: SSL is required but the server doesn't support it
+```
+
+排查方法
+
+```
+1 SSL配置：检查并确保MySQL服务器和客户端的SSL配置正确，包括证书文件和配置参数。
+2 协议支持：确保MySQL服务器支持SSL/TLS连接，可以通过SHOW VARIABLES LIKE 'have_ssl';命令查看。
 ```
 
